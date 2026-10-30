@@ -146,6 +146,10 @@ pub struct RunOptions {
     /// Output scale policy and frame-rate cap for [`desktop::plan`].
     pub desktop: DesktopOptions,
     pub threads: u16,
+    /// x264 quality target (0–51, lower is sharper).
+    pub crf: f32,
+    /// x264 speed preset.
+    pub preset: crate::encoder::Preset,
     pub encoder: crate::encoder::Backend,
     /// How the cursor reaches the receiver.
     pub cursor: CursorMode,
@@ -393,12 +397,14 @@ impl EncodePipeline {
                     match Encoder::new(w, h, settings) {
                         Ok(e) => {
                             info!(
-                                "encoder: {} {}x{} {:.1} Mbit/s, {} threads",
+                                "encoder: {} {}x{} {:.1} Mbit/s, {} threads, crf {} preset {}",
                                 e.label(),
                                 w & !1,
                                 h & !1,
                                 settings.bitrate_bps as f64 / 1e6,
-                                settings.threads
+                                settings.threads,
+                                settings.crf,
+                                settings.preset.as_str()
                             );
                             // A resize reopens the same backend without probing.
                             settings.backend = e.backend();
@@ -574,6 +580,8 @@ fn build(
         bitrate_bps: (opts.bitrate_mbps * 1e6) as u32,
         max_fps: target.plan.stream.fps as f32,
         threads: opts.threads,
+        crf: opts.crf,
+        preset: opts.preset,
     })?;
     // Painted until the side channel has delivered its first sprite.
     let painted = opts.cursor != CursorMode::Off;
@@ -1310,6 +1318,8 @@ mod tests {
             bitrate_mbps: 20.0,
             desktop: DesktopOptions::default(),
             threads: 1,
+            crf: 21.0,
+            preset: crate::encoder::Preset::Superfast,
             encoder: crate::encoder::Backend::Auto,
             cursor: CursorMode::Auto,
             position: Position::AutoRight,

@@ -153,6 +153,8 @@ pub fn doctor(req: &Request, config_path: Option<&Path>) -> bool {
             bitrate_bps: 2_000_000,
             max_fps: 60.0,
             threads: 1,
+            crf: 21.0,
+            preset: encoder::Preset::Superfast,
         };
         match encoder::Encoder::new(320, 240, s) {
             Ok(e) => println!("  {}: ok", e.label()),

@@ -185,6 +185,8 @@ Useful `run` options:
 | `--bitrate-mbps` | `20` | Video bitrate |
 | `--max-fps` | 60 | Frame-rate cap; above 60 only when the receiver's decoder advertises it, and never above its panel rate |
 | `--encoder` | `auto` | `auto`, `v4l2m2m`, `x264` or `openh264` |
+| `--crf` | 21 | x264 quality, 0–51 (lower is sharper and costs bitrate; 16–18 fixes blocky text) |
+| `--preset` | `superfast` | x264 speed/quality preset (`ultrafast` … `veryslow`); slower buys sharpness with CPU |
 | `--cursor` | `auto` | `auto`, `video` (always paint the cursor into the video) or `off`; `--no-cursor` is `off`. `auto` sends the cursor separately when the receiver and desktop support it, which today means never on Hyprland |
 | `--capture` | `auto` | Screen-capture protocol on Hyprland and Sway: `auto`, `ext` or `wlr`. `auto` uses `wlr` on Hyprland before 0.57, whose `ext` capture can crash when a display disappears |
 | `--workspace` | next free one | Show this workspace (name or number) on the virtual display, keeping your focus where it is. Hyprland and Sway; ignored with a warning on KDE Plasma and GNOME |
@@ -257,6 +259,8 @@ scale = "passthrough"    # "passthrough", "mac" or a number
 bitrate-mbps = 20
 max-fps = 60
 encoder = "auto"         # "auto", "v4l2m2m", "x264" or "openh264"
+crf = 18                 # x264 quality, 0-51 (lower is sharper; 21 is the default)
+preset = "veryfast"      # x264 speed/quality preset
 cursor = "auto"          # "auto", "video" or "off" (true/false: auto/off)
 capture = "auto"         # "auto", "ext" or "wlr"
 workspace = "8"          # Hyprland/Sway: show workspace 8 on the virtual display
@@ -379,6 +383,11 @@ session.
   virtual-pointer protocol was found.
 * **High CPU or lag**: encoding runs on the CPU. Lower `--max-fps` (for
   example 30) or `--bitrate-mbps`, or use a smaller receiver.
+* **Blocky text or banded gradients**: the encoder targets CRF 21, which at
+  tablet resolution is generous for a desktop but soft on small text and flat
+  colour. Try `--crf 18` (or 16 on a cable/5 GHz), and `--preset veryfast` if
+  CPU allows. A 1080p video shown full-screen on a 1440p-class panel is also
+  scaled up before encoding, so it can never be crisper than its source.
 * **The virtual display changed size after a theme switch**: the sender puts
   it back within a second; if it keeps changing, it stops after three tries
   and says so.

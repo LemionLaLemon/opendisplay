@@ -16,6 +16,8 @@
 //! tailscale = true           # false: never probe Tailscale peers (#409)
 //! usb = true                 # dial through usbmuxd instead of Wi-Fi (§2.2)
 //! usb-device = "00008030"    # UDID (or part) when several are attached
+//! crf = 18                   # x264 quality, 0-51 (lower is sharper)
+//! preset = "veryfast"        # x264 speed/quality preset
 //!
 //! [receiver."3F2A9C1E-..."]   # id (from `od-sender list`) or Bonjour name
 //! position = "auto-left"
@@ -98,6 +100,8 @@ struct RawConfig {
     tailscale: Option<bool>,
     usb: Option<bool>,
     usb_device: Option<String>,
+    crf: Option<f32>,
+    preset: Option<String>,
     #[serde(default)]
     receiver: BTreeMap<String, RawOverride>,
 }
@@ -138,6 +142,10 @@ pub struct Config {
     pub usb: Option<bool>,
     /// Which USB device to dial when several are attached (UDID or part).
     pub usb_device: Option<String>,
+    /// x264 quality target (0-51, lower is sharper).
+    pub crf: Option<f32>,
+    /// x264 speed/quality preset.
+    pub preset: Option<encoder::Preset>,
     /// The top-level per-receiver settings.
     pub defaults: Layer,
     /// `[receiver."<key>"]` tables, by id or Bonjour name.
@@ -193,6 +201,11 @@ impl Config {
             tailscale: raw.tailscale,
             usb: raw.usb,
             usb_device: raw.usb_device,
+            crf: raw.crf,
+            preset: raw
+                .preset
+                .map(|p| encoder::Preset::from_str(&p, true).map_err(|m| anyhow!("preset: {m}")))
+                .transpose()?,
             defaults: layer(raw.position, raw.scale, raw.bitrate_mbps, raw.workspace)?,
             receivers,
         })
@@ -258,6 +271,8 @@ mod tests {
         tailscale = false
         usb = true
         usb-device = "00008030-00165C3A1E78C02E"
+        crf = 18
+        preset = "veryfast"
 
         [receiver."3F2A9C1E-AAAA"]
         position = "-1600,0"
@@ -279,6 +294,9 @@ mod tests {
         assert_eq!(c.usb, Some(true));
         assert_eq!(c.usb_device.as_deref(), Some("00008030-00165C3A1E78C02E"));
         assert!(Config::parse("usb = \"yes\"").is_err());
+        assert_eq!(c.crf, Some(18.0));
+        assert_eq!(c.preset, Some(encoder::Preset::Veryfast));
+        assert!(Config::parse("preset = \"turbo\"").is_err());
         assert!(Config::parse("tailscale = \"no\"").is_err());
         assert!(Config::parse("capture = \"dmabuf\"").is_err());
         assert_eq!(c.cursor, Some(CursorMode::Off));

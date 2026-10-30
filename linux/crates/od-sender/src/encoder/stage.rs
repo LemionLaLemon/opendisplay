@@ -254,6 +254,8 @@ mod tests {
                 max_fps: 60.0,
                 // Sliced threads make x264's output differ run to run.
                 threads: 1,
+                crf: 21.0,
+                preset: crate::encoder::Preset::Superfast,
             },
         )
         .ok()

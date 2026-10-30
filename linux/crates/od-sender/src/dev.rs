@@ -295,6 +295,8 @@ fn encode_bench(
             bitrate_bps: (bitrate_mbps * 1e6) as u32,
             max_fps: 60.0,
             threads,
+            crf: 21.0,
+            preset: encoder::Preset::Superfast,
         },
     )?;
     let stride = width * 4;
@@ -393,6 +395,8 @@ fn pipeline_bench(
         bitrate_bps: 20_000_000,
         max_fps: fps as f32,
         threads: threads_or_all(threads),
+        crf: 21.0,
+        preset: encoder::Preset::Superfast,
     };
     let stage = encoder::ConvertStage::new();
     let enc_stage = stage.clone();
@@ -805,6 +809,8 @@ fn smoke(
                                 bitrate_bps: 8_000_000,
                                 max_fps: 60.0,
                                 threads: threads_or_all(0),
+                                crf: 21.0,
+                                preset: encoder::Preset::Superfast,
                             },
                         )?),
                     };

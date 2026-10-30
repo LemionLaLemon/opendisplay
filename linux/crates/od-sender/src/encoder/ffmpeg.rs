@@ -85,9 +85,9 @@ impl FfmpegEncoder {
                 v.set_max_bit_rate(s.bitrate_bps as usize);
                 // SAFETY: plain field write on a context we own and have not opened.
                 unsafe { (*v.as_mut_ptr()).rc_buffer_size = (s.bitrate_bps / 4) as i32 };
-                opts.set("preset", "superfast");
+                opts.set("preset", s.preset.as_str());
                 opts.set("tune", "zerolatency");
-                opts.set("crf", "21");
+                opts.set("crf", &format!("{}", s.crf));
                 // A pict_type of I becomes an IDR, not a recovery-point I frame.
                 opts.set("forced-idr", "1");
                 // §5.3: keyframes only on demand.

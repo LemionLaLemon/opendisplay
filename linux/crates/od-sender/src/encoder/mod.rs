@@ -39,8 +39,7 @@ pub enum Backend {
     Openh264,
 }
 
-/// `false` when no `/dev/video*` node is a V4L2 H.264 encoder, so
-/// [`Backend::V4l2m2m`] cannot open; `true` when one is, or when a node
+/// `false` when no `/dev/video*` node is a V4L2 H.264 encoder, so/// [`Backend::V4l2m2m`] cannot open; `true` when one is, or when a node
 /// could not be asked.
 pub fn v4l2m2m_present() -> bool {
     v4l2::h264_encoder() != v4l2::Presence::Absent
@@ -57,6 +56,38 @@ impl Backend {
     }
 }
 
+/// x264 speed/quality preset. A slower preset spends more CPU for a better
+/// picture at the same CRF, which is what text and flat gradients need.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, ValueEnum)]
+pub enum Preset {
+    Ultrafast,
+    #[default]
+    Superfast,
+    Veryfast,
+    Faster,
+    Fast,
+    Medium,
+    Slow,
+    Slower,
+    Veryslow,
+}
+
+impl Preset {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Preset::Ultrafast => "ultrafast",
+            Preset::Superfast => "superfast",
+            Preset::Veryfast => "veryfast",
+            Preset::Faster => "faster",
+            Preset::Fast => "fast",
+            Preset::Medium => "medium",
+            Preset::Slow => "slow",
+            Preset::Slower => "slower",
+            Preset::Veryslow => "veryslow",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct EncoderSettings {
     pub backend: Backend,
@@ -64,6 +95,10 @@ pub struct EncoderSettings {
     pub max_fps: f32,
     /// 0 = let the backend decide.
     pub threads: u16,
+    /// x264 quality target, 0–51 (lower is sharper); ignored by other backends.
+    pub crf: f32,
+    /// x264 speed preset; ignored by other backends.
+    pub preset: Preset,
 }
 
 /// One encoded picture ready for the wire.

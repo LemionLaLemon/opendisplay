@@ -118,6 +118,8 @@ mod tests {
             bitrate_bps: 8_000_000,
             max_fps: 60.0,
             threads: 1,
+            crf: 21.0,
+            preset: crate::encoder::Preset::Superfast,
         }
     }
 

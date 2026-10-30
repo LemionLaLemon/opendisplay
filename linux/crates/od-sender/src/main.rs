@@ -131,6 +131,14 @@ enum Cmd {
         /// Encoder threads (0 = all cores).
         #[arg(long, default_value_t = 0)]
         threads: u16,
+        /// x264 quality target, 0-51: lower is sharper and costs bitrate
+        /// [default: 21, or the config file's].
+        #[arg(long, value_name = "0-51")]
+        crf: Option<f32>,
+        /// x264 speed/quality preset: a slower one buys sharpness with CPU
+        /// [default: superfast, or the config file's].
+        #[arg(long, value_enum)]
+        preset: Option<encoder::Preset>,
         /// Cursor delivery: `auto` (side channel when the receiver and
         /// compositor support it, else painted into the video), `video`, or
         /// `off` [default: auto, or the config file's].
@@ -315,6 +323,8 @@ fn real_main() -> Result<i32> {
             max_fps,
             scale,
             threads,
+            crf,
+            preset,
             encoder,
             cursor,
             no_cursor,
@@ -334,6 +344,10 @@ fn real_main() -> Result<i32> {
                 workspace,
             };
             let eff = cli.over(&config.defaults).over(&config::builtin());
+            let crf = crf.or(config.crf).unwrap_or(21.0);
+            if !(0.0..=51.0).contains(&crf) {
+                anyhow::bail!("--crf must be between 0 and 51 (lower is sharper), got {crf}");
+            }
             let to = to.or_else(|| {
                 (connect.is_none() && name.is_none())
                     .then(|| config.to.clone())
@@ -390,6 +404,8 @@ fn real_main() -> Result<i32> {
                             max_fps: max_fps.or(config.max_fps),
                         },
                         threads: dev::threads_or_all(threads),
+                        crf,
+                        preset: preset.or(config.preset).unwrap_or_default(),
                         encoder: encoder.or(config.encoder).unwrap_or(encoder::Backend::Auto),
                         cursor: if no_cursor {
                             session::CursorMode::Off
