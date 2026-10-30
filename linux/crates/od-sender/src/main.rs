@@ -12,6 +12,7 @@ mod latest;
 mod pipewire;
 mod session;
 mod tailscale;
+mod usb;
 mod wayland;
 
 use std::net::SocketAddr;
@@ -96,6 +97,22 @@ enum Cmd {
         /// Only accept a discovered receiver whose name contains this (same as `--to <name>`).
         #[arg(long, hide = true, conflicts_with_all = ["to", "connect"])]
         name: Option<String>,
+        /// Use the USB cable instead of Wi-Fi: dial the receiver's port 9000
+        /// through usbmuxd (PROTOCOL.md §2.2). The iPad/iPhone must be
+        /// attached, trusted and running the OpenDisplay app in the
+        /// foreground. Needs libimobiledevice's usbmuxd.
+        #[arg(long, conflicts_with_all = ["to", "receiver", "connect", "name"])]
+        usb: bool,
+        /// Prefer the USB cable and fall back to Wi-Fi when no Apple device is
+        /// attached. Re-decided on every reconnect, so unplugging hands the
+        /// session to the network and plugging it back in returns to the
+        /// cable. `--to` still names the Wi-Fi receiver.
+        #[arg(long, conflicts_with = "usb")]
+        auto: bool,
+        /// Pick the USB device by UDID (or a part of it) when several are
+        /// attached; default: the only one. Needs --usb or --auto.
+        #[arg(long, value_name = "UDID")]
+        usb_device: Option<String>,
         /// Target bitrate [default: 20, or the config file's].
         #[arg(long)]
         bitrate_mbps: Option<f32>,
@@ -147,6 +164,10 @@ enum Cmd {
         /// How long to browse, in seconds.
         #[arg(long, default_value_t = 3.0)]
         timeout: f64,
+        /// List Apple devices on a USB cable (through usbmuxd) instead of
+        /// receivers on the network.
+        #[arg(long)]
+        usb: bool,
         /// Print a JSON array of {name, addr, id, pv} (for scripts and agents).
         #[arg(long)]
         json: bool,
@@ -287,6 +308,9 @@ fn real_main() -> Result<i32> {
             wait,
             connect,
             name,
+            usb,
+            usb_device,
+            auto,
             bitrate_mbps,
             max_fps,
             scale,
@@ -317,11 +341,47 @@ fn real_main() -> Result<i32> {
             });
             let mut backend = detect::detect(&backend.request_with(config.capture))?;
             let rt = tokio::runtime::Runtime::new()?;
+            let usb = usb || config.usb.unwrap_or(false);
+            let usb_device = usb_device.or_else(|| config.usb_device.clone());
+            if usb_device.is_some() && !usb && !auto {
+                anyhow::bail!("--usb-device needs --usb or --auto");
+            }
             let ran = rt.block_on(async {
-                let receiver =
-                    resolve_receiver(to, connect, name, wait, config.tailscale.unwrap_or(true))?;
+                let (dial, receiver_id, receiver_name) = if usb {
+                    let name = match &usb_device {
+                        Some(d) => format!("USB device {d}"),
+                        None => "the USB device".to_string(),
+                    };
+                    (session::Dial::Usb { device: usb_device }, None, name)
+                } else if auto {
+                    let name = to
+                        .clone()
+                        .unwrap_or_else(|| "the USB or Wi-Fi receiver".to_string());
+                    (
+                        session::Dial::Auto {
+                            usb_device,
+                            to,
+                            tailscale: config.tailscale.unwrap_or(true),
+                        },
+                        None,
+                        name,
+                    )
+                } else {
+                    let receiver = resolve_receiver(
+                        to,
+                        connect,
+                        name,
+                        wait,
+                        config.tailscale.unwrap_or(true),
+                    )?;
+                    (
+                        session::Dial::Tcp(receiver.addr),
+                        receiver.id,
+                        receiver.name,
+                    )
+                };
                 session::run(
-                    receiver.addr,
+                    dial,
                     backend.as_mut(),
                     session::RunOptions {
                         bitrate_mbps: eff.bitrate_mbps.unwrap_or(20.0),
@@ -341,8 +401,8 @@ fn real_main() -> Result<i32> {
                         keep_output,
                         reconnect: !no_reconnect,
                         duration: duration.map(Duration::from_secs_f64),
-                        receiver_id: receiver.id,
-                        receiver_name: receiver.name,
+                        receiver_id,
+                        receiver_name,
                         cli,
                         config,
                     },
@@ -354,7 +414,45 @@ fn real_main() -> Result<i32> {
             rt.shutdown_timeout(Duration::from_millis(500));
             ran?;
         }
-        Cmd::List { timeout, json } => {
+        Cmd::List { timeout, usb, json } => {
+            if usb {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                return match rt.block_on(usb::devices()) {
+                    Ok(found) => {
+                        if json {
+                            let rows: Vec<_> = found
+                                .iter()
+                                .map(|d| {
+                                    serde_json::json!({
+                                        "udid": d.serial,
+                                        "device-id": d.id,
+                                        "connection": d.connection,
+                                        "product-id": d.product_id,
+                                    })
+                                })
+                                .collect();
+                            println!("{}", serde_json::to_string_pretty(&rows)?);
+                        } else if found.is_empty() {
+                            println!(
+                                "no Apple devices on USB.\nConnect the iPad/iPhone with a cable \
+                                 and trust this computer."
+                            );
+                        } else {
+                            println!("udid  (usbmuxd device, USB product)");
+                            for d in &found {
+                                println!("{}", usb::describe_device(d));
+                            }
+                        }
+                        Ok(if found.is_empty() { 1 } else { 0 })
+                    }
+                    Err(e) => {
+                        eprintln!("{e:#}");
+                        Ok(1)
+                    }
+                };
+            }
             // `list` worked without a config file before; a broken one does
             // not stop it, it only loses the `tailscale` setting.
             let tailscale = load_config(args.config.as_deref())

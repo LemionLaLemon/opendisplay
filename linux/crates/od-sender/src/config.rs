@@ -14,6 +14,8 @@
 //! cursor = "auto"            # auto | video | off; true = auto, false = off
 //! capture = "auto"           # auto | ext | wlr (auto: wlr on Hyprland < 0.57)
 //! tailscale = true           # false: never probe Tailscale peers (#409)
+//! usb = true                 # dial through usbmuxd instead of Wi-Fi (§2.2)
+//! usb-device = "00008030"    # UDID (or part) when several are attached
 //!
 //! [receiver."3F2A9C1E-..."]   # id (from `od-sender list`) or Bonjour name
 //! position = "auto-left"
@@ -94,6 +96,8 @@ struct RawConfig {
     capture: Option<String>,
     workspace: Option<String>,
     tailscale: Option<bool>,
+    usb: Option<bool>,
+    usb_device: Option<String>,
     #[serde(default)]
     receiver: BTreeMap<String, RawOverride>,
 }
@@ -130,6 +134,10 @@ pub struct Config {
     pub cursor: Option<CursorMode>,
     /// Try the Tailscale peers when Bonjour finds nothing (default: yes).
     pub tailscale: Option<bool>,
+    /// Use the USB (usbmuxd) binding by default (PROTOCOL.md §2.2).
+    pub usb: Option<bool>,
+    /// Which USB device to dial when several are attached (UDID or part).
+    pub usb_device: Option<String>,
     /// The top-level per-receiver settings.
     pub defaults: Layer,
     /// `[receiver."<key>"]` tables, by id or Bonjour name.
@@ -183,6 +191,8 @@ impl Config {
                 .map(|c| CaptureChoice::from_str(&c, true).map_err(|m| anyhow!("capture: {m}")))
                 .transpose()?,
             tailscale: raw.tailscale,
+            usb: raw.usb,
+            usb_device: raw.usb_device,
             defaults: layer(raw.position, raw.scale, raw.bitrate_mbps, raw.workspace)?,
             receivers,
         })
@@ -246,6 +256,8 @@ mod tests {
         cursor = false
         capture = "wlr"
         tailscale = false
+        usb = true
+        usb-device = "00008030-00165C3A1E78C02E"
 
         [receiver."3F2A9C1E-AAAA"]
         position = "-1600,0"
@@ -264,6 +276,9 @@ mod tests {
         assert_eq!(c.encoder, Some(encoder::Backend::X264));
         assert_eq!(c.capture, Some(CaptureChoice::Wlr));
         assert_eq!(c.tailscale, Some(false));
+        assert_eq!(c.usb, Some(true));
+        assert_eq!(c.usb_device.as_deref(), Some("00008030-00165C3A1E78C02E"));
+        assert!(Config::parse("usb = \"yes\"").is_err());
         assert!(Config::parse("tailscale = \"no\"").is_err());
         assert!(Config::parse("capture = \"dmabuf\"").is_err());
         assert_eq!(c.cursor, Some(CursorMode::Off));

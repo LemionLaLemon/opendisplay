@@ -38,7 +38,10 @@ Reports are very welcome ([#299](https://github.com/peetzweg/opendisplay/issues/
 | **Expected to work** | Arch / Omarchy on x86_64. Any distro with Hyprland 0.55+. iPad and Android (Google Play beta) as receivers: Android streamed fine in a first session (Pixel 10a, 53 fps, 33 ms), but touch, scroll, rotation, lock and quit are not checked yet |
 | **Experimental** | **Sway 1.10+**, **KDE Plasma 6.8+** (6.7 and older with the desktop entry in place, see [KDE Plasma](#kde-plasma)), **GNOME 50+** (older GNOME may work, untested). Verified on headless desktops only |
 | **Existing outputs only** | niri, COSMIC, river, labwc, Wayfire and similar: `od-sender run --output <name>` streams an output you created yourself, if the compositor offers the screen-capture and virtual-pointer protocols `od-sender doctor` lists |
-| **Not supported yet** | X11 sessions, Hyprland older than 0.55, Flatpak, SteamOS Gaming Mode, USB cable transport, HEVC, Apple Pencil pressure (mapped to a plain pointer), audio, mirror mode |
+| **Not supported yet** | X11 sessions, Hyprland older than 0.55, Flatpak, SteamOS Gaming Mode, HEVC, Apple Pencil pressure (mapped to a plain pointer), audio, mirror mode |
+
+The USB binding covers **Apple devices on a cable** (see [USB](#usb-apple-devices)).
+Android receivers are Wi-Fi only for now.
 
 On an unsupported desktop `od-sender` exits with a message that names what is
 missing.
@@ -173,6 +176,9 @@ Useful `run` options:
 | Option | Default | |
 |---|---|---|
 | `--to` | the only receiver found | Receiver name, id, or `host:port` |
+| `--usb` | off | Use the cable instead of Wi-Fi: dial the receiver's port 9000 through usbmuxd (Apple devices) |
+| `--auto` | off | Cable when an Apple device is attached, Wi-Fi otherwise; re-decided on every reconnect |
+| `--usb-device` | the only device | Pick the USB device by UDID (or part of it) when several are attached |
 | `--wait` | off | Keep looking until the receiver appears (the login unit uses it) |
 | `--position` | `auto-right` | Where the virtual display goes: `auto-right`, `auto-left`, `auto-up`, `auto-down`, or `x,y` |
 | `--scale` | `passthrough` | `passthrough` (the receiver's own, 3 on most iPhones), `mac` (2 for Retina-class screens, else 1, like the Mac sender) or a number. GNOME and Hyprland round to a scale they support (GNOME: an iPhone's 3 becomes 2; Hyprland: a Pixel's 2.625 becomes 2.667). If text is too small, try a larger number |
@@ -189,6 +195,45 @@ Hyprland instances, like `hyprctl -i`; `od-sender doctor` lists them.
 
 Exit codes: 0 done, 1 error, 2 unsupported desktop or a config file that does
 not parse, 3 no receiver found, 4 several receivers and no `--to`.
+
+### USB (Apple devices)
+
+An iPhone or iPad on a cable can carry the stream instead of Wi-Fi: the same
+TCP protocol runs through **usbmuxd**, Apple's device-multiplexing daemon, so
+there is no packet loss from a busy radio and the round trip drops from
+several milliseconds to one or two. It is the binding PROTOCOL.md §2.2
+describes, and the receiver shows it as "USB" in its stats.
+
+Install libimobiledevice's usbmuxd (it usually starts by itself on plug-in):
+
+```sh
+sudo pacman -S --needed libimobiledevice usbmuxd   # Arch
+sudo apt install libimobiledevice-utils usbmuxd    # Debian / Ubuntu
+sudo systemctl enable --now usbmuxd
+```
+
+Attach the device, answer its "Trust this computer" prompt once, open the
+OpenDisplay app in the foreground, then:
+
+```sh
+od-sender list --usb        # UDID of each Apple device on a cable
+od-sender run --usb         # the only one attached
+od-sender run --usb --usb-device 00165C3A  # or pick one by part of its UDID
+```
+
+`--usb` conflicts with `--to`: there is no address to discover on the cable.
+Reconnection works as on Wi-Fi (the sender dials usbmuxd again). Set
+`usb = true` (and optionally `usb-device = "…"`) in the config file to make
+it the default; the login unit then starts on the cable too.
+
+`--auto` is the untethered option: it prefers the cable when an Apple device
+is attached and falls back to Wi-Fi (`--to`, or discovery) otherwise. The
+choice is re-made on every dial, so pulling the cable during a session ends
+that session (the virtual display goes away and its windows move back to your
+main screen) and the next dial arrives over Wi-Fi — typically 2–4 s later.
+Plug the cable back in and the following reconnect returns to USB. The
+receiver must be on the same Wi-Fi with the app in the foreground for the
+fallback to work, exactly as for a plain Wi-Fi run.
 
 ### `doctor`
 
@@ -216,6 +261,8 @@ cursor = "auto"          # "auto", "video" or "off" (true/false: auto/off)
 capture = "auto"         # "auto", "ext" or "wlr"
 workspace = "8"          # Hyprland/Sway: show workspace 8 on the virtual display
 tailscale = true         # false: never try Tailscale peers when Bonjour finds nothing
+usb = false              # true: dial through usbmuxd on the cable (§2.2)
+usb-device = "00008030"  # UDID (or part) when several Apple devices are attached
 
 # Overrides for one receiver: position, scale, bitrate-mbps and workspace.
 [receiver."3F2A9C1E-..."]
@@ -323,6 +370,7 @@ session.
   each probe); with another VPN, use `--to <vpn-ip>:9000`.
 * **"several receivers found"** (exit 4): pick one with `--to <name>`, or set
   `to = "…"` in the config file.
+* **`--usb` finds nothing**: `lsusb` should list the iPad/iPhone and `od-sender list --usb` should print its UDID. If usbmuxd is not running (`systemctl status usbmuxd`), start it and replug. "usbmuxd refused port 9000" usually means the OpenDisplay app is not in the foreground on the device; a refused "Trust this computer" also blocks the tunnel.
 * **The receiver stays black**: on Hyprland, see
   [Hyprland permissions](#hyprland-permissions). Otherwise run
   `RUST_LOG=debug od-sender run …` and look for capture errors.

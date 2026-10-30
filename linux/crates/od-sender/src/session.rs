@@ -27,7 +27,98 @@ use crate::config::{self, Config, Layer};
 use crate::desktop::{self, Debounce, DesktopOptions, DesktopPlan, PlanError, StreamPlan};
 use crate::encoder::{ConvertStage, Encoded, Encoder, EncoderSettings};
 use crate::latest;
+use crate::usb;
 use crate::wayland::cursor::base64;
+
+/// A byte pipe to the receiver. The protocol runs over a single TCP stream on
+/// every binding, so the session code is generic over it (§1, §2).
+pub trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
+pub type Transport = Box<dyn Stream>;
+
+/// How the sender reaches the receiver: one of the transport bindings in §2.
+#[derive(Debug, Clone)]
+pub enum Dial {
+    /// Wi-Fi / LAN / Tailscale / a Thunderbolt bridge: dial TCP directly.
+    Tcp(SocketAddr),
+    /// An Apple device on a cable: dial its port 9000 through usbmuxd (§2.2).
+    Usb { device: Option<String> },
+    /// Cable when an Apple device is attached, Wi-Fi otherwise. Re-decided on
+    /// every dial, so pulling the cable hands the session to the network and
+    /// plugging it back in returns to the cable on the next reconnect.
+    Auto {
+        usb_device: Option<String>,
+        /// Receiver name/id, or `host:port` for the Wi-Fi side.
+        to: Option<String>,
+        tailscale: bool,
+    },
+}
+
+impl Dial {
+    /// Connect, returning the stream, a label for logs and the peer address
+    /// when there is one (the USB binding has no IP; its datagrams are not
+    /// available either, §6.3).
+    async fn open(&self) -> Result<(Transport, String, Option<SocketAddr>)> {
+        match self {
+            Dial::Tcp(addr) => {
+                let stream = TcpStream::connect(addr).await?;
+                let _ = stream.set_nodelay(true);
+                Ok((Box::new(stream), addr.to_string(), Some(*addr)))
+            }
+            Dial::Usb { device } => {
+                let (stream, label) = usb::open(device.as_deref()).await?;
+                Ok((Box::new(stream), label, None))
+            }
+            Dial::Auto {
+                usb_device,
+                to,
+                tailscale,
+            } => {
+                // Prefer the cable; any reason it is not usable (no device,
+                // no usbmuxd, app not in the foreground) is a Wi-Fi dial
+                // instead, so unplugging mid-session keeps the display.
+                let usb_err = match usb::open(usb_device.as_deref()).await {
+                    Ok((stream, label)) => return Ok((Box::new(stream), label, None)),
+                    Err(e) => e,
+                };
+                debug!("USB not usable ({usb_err:#}); dialing Wi-Fi");
+                let addr = match to.as_deref().and_then(|t| t.parse::<SocketAddr>().ok()) {
+                    Some(a) => a,
+                    None => {
+                        let want = to.clone();
+                        let tailscale = *tailscale;
+                        tokio::task::spawn_blocking(move || {
+                            crate::discover::find(
+                                want.as_deref(),
+                                Some(Duration::from_secs(10)),
+                                tailscale,
+                            )
+                        })
+                        .await
+                        .context("discovery task")?
+                        .with_context(|| format!("no USB device ({usb_err:#})"))?
+                        .addr
+                    }
+                };
+                let stream = TcpStream::connect(addr).await.with_context(|| {
+                    format!("Wi-Fi dial {addr} (USB was not usable either: {usb_err:#})")
+                })?;
+                let _ = stream.set_nodelay(true);
+                Ok((Box::new(stream), addr.to_string(), Some(addr)))
+            }
+        }
+    }
+
+    /// How this binding is named before a dial succeeds.
+    pub fn describe(&self) -> String {
+        match self {
+            Dial::Tcp(addr) => addr.to_string(),
+            Dial::Usb { device: Some(d) } => format!("USB device {d}"),
+            Dial::Usb { device: None } => "the USB device".into(),
+            Dial::Auto { .. } => "the USB or Wi-Fi receiver".into(),
+        }
+    }
+}
 
 /// How the pointer cursor reaches the receiver.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
@@ -681,7 +772,7 @@ fn conflict_or(e: anyhow::Error, receiver: String) -> Result<SessionEnd> {
     }
 }
 
-pub async fn run(addr: SocketAddr, backend: &mut dyn Backend, opts: RunOptions) -> Result<()> {
+pub async fn run(dial: Dial, backend: &mut dyn Backend, opts: RunOptions) -> Result<()> {
     let start = Instant::now();
     info!(
         "backend {}: {} ({})",
@@ -704,13 +795,12 @@ pub async fn run(addr: SocketAddr, backend: &mut dyn Backend, opts: RunOptions) 
             break;
         }
         let dialed = tokio::select! {
-            r = TcpStream::connect(addr) => r,
+            r = dial.open() => r,
             _ = shutdown.changed() => break,
         };
         match dialed {
-            Ok(stream) => {
-                let _ = stream.set_nodelay(true);
-                info!("connected to receiver {addr}");
+            Ok((stream, label, peer)) => {
+                info!("connected to receiver {label}");
                 let began = Instant::now();
                 let end = session(
                     stream,
@@ -719,7 +809,7 @@ pub async fn run(addr: SocketAddr, backend: &mut dyn Backend, opts: RunOptions) 
                     start,
                     shutdown.clone(),
                     &mut losses,
-                    Some(addr),
+                    peer,
                 )
                 .await;
                 lasted = Some(began.elapsed());
@@ -743,7 +833,7 @@ pub async fn run(addr: SocketAddr, backend: &mut dyn Backend, opts: RunOptions) 
                     Err(e) => warn!("session error: {e:#}"),
                 }
             }
-            Err(e) => warn!("dial {addr}: {e}"),
+            Err(e) => warn!("dial {}: {e:#}", dial.describe()),
         }
         if !opts.reconnect || *shutdown.borrow() {
             break;
@@ -891,7 +981,11 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     losses: &mut LossBudget,
     peer: Option<SocketAddr>,
 ) -> Result<SessionEnd> {
-    let mut sess = SenderSession::new(SenderConfig::default());
+    let mut sess = SenderSession::new(SenderConfig {
+        // The USB binding has no datagrams to send the cursor on (§6.3).
+        use_cursor_udp: peer.is_some(),
+        ..SenderConfig::default()
+    });
     // Cursor events from the display's cursor thread, and the UDP socket for
     // the side channel (bound on the first datagram).
     let (cursor_tx, mut cursor_rx) = mpsc::unbounded_channel::<CursorEvent>();
