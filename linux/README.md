@@ -38,7 +38,7 @@ Reports are very welcome ([#299](https://github.com/peetzweg/opendisplay/issues/
 | **Expected to work** | Arch / Omarchy on x86_64. Any distro with Hyprland 0.55+. iPad and Android (Google Play beta) as receivers: Android streamed fine in a first session (Pixel 10a, 53 fps, 33 ms), but touch, scroll, rotation, lock and quit are not checked yet |
 | **Experimental** | **Sway 1.10+**, **KDE Plasma 6.8+** (6.7 and older with the desktop entry in place, see [KDE Plasma](#kde-plasma)), **GNOME 50+** (older GNOME may work, untested). Verified on headless desktops only |
 | **Existing outputs only** | niri, COSMIC, river, labwc, Wayfire and similar: `od-sender run --output <name>` streams an output you created yourself, if the compositor offers the screen-capture and virtual-pointer protocols `od-sender doctor` lists |
-| **Not supported yet** | X11 sessions, Hyprland older than 0.55, Flatpak, SteamOS Gaming Mode, HEVC, Apple Pencil pressure (mapped to a plain pointer), audio, mirror mode |
+| **Not supported yet** | X11 sessions, Hyprland older than 0.55, Flatpak, SteamOS Gaming Mode, HEVC, Apple Pencil pressure/tilt (the pen drives a plain pointer), audio, mirror mode |
 
 The USB binding covers **Apple devices on a cable** (see [USB](#usb-apple-devices)).
 Android receivers are Wi-Fi only for now.
@@ -189,6 +189,7 @@ Useful `run` options:
 | `--preset` | `superfast` | x264 speed/quality preset (`ultrafast` … `veryslow`); slower buys sharpness with CPU |
 | `--cursor` | `auto` | `auto`, `video` (always paint the cursor into the video) or `off`; `--no-cursor` is `off`. `auto` sends the cursor separately when the receiver and desktop support it, which today means never on Hyprland |
 | `--capture` | `auto` | Screen-capture protocol on Hyprland and Sway: `auto`, `ext` or `wlr`. `auto` uses `wlr` on Hyprland before 0.57, whose `ext` capture can crash when a display disappears |
+| `--pencil` | `draw` | What the Apple Pencil does: `draw` (contact holds the left button, like a finger), `move` (aim only; click with the keyboard), `off` |
 | `--workspace` | next free one | Show this workspace (name or number) on the virtual display, keeping your focus where it is. Hyprland and Sway; ignored with a warning on KDE Plasma and GNOME |
 | `--backend` | detected | `hyprland`, `wlroots` (Sway), `kde`, `gnome`, or `adopt` with `--output <name>` |
 
@@ -403,6 +404,16 @@ rm -r ~/.config/opendisplay                              # optional: your settin
 
 ## Known issues
 
+* **The Apple Pencil draws as a plain pointer.** Pen down/move/up move the
+  same virtual pointer as a finger and hold the left button for as long as
+  the pen touches, so tapping, dragging and drawing work. Two consequences:
+  pressure, tilt and barrel rotation have no Wayland virtual-pointer
+  equivalent and are dropped (constant brush width); and a pen with no hover
+  (Pencil 1, or any iPad without hover) cannot aim without clicking, because
+  contact *is* the button. For games that expect that separation, such as
+  osu!, use `--pencil move`: the pen only aims and clicks come from the
+  keyboard. Pencil 2 on a hover-capable iPad sends `hover` moves, which the
+  sender already maps to motion without a press.
 * **The cursor is part of the video on Hyprland.** It moves with video
   latency, and on a static screen it can lag until something else on the
   display changes. Hyprland's cursor-capture interface cannot deliver the

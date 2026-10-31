@@ -144,6 +144,11 @@ enum Cmd {
         /// `off` [default: auto, or the config file's].
         #[arg(long, value_enum)]
         cursor: Option<session::CursorMode>,
+        /// What the Apple Pencil does: `draw` holds the left button while the
+        /// pen touches (like a finger), `move` only aims so you can click with
+        /// the keyboard, `off` ignores the pen [default: draw].
+        #[arg(long, value_enum, value_name = "MODE")]
+        pencil: Option<crate::wayland::input::PencilMode>,
         /// Same as `--cursor off`.
         #[arg(long, conflicts_with = "cursor")]
         no_cursor: bool,
@@ -327,6 +332,7 @@ fn real_main() -> Result<i32> {
             preset,
             encoder,
             cursor,
+            pencil,
             no_cursor,
             position,
             workspace,
@@ -335,6 +341,7 @@ fn real_main() -> Result<i32> {
             duration,
             backend,
         } => {
+            crate::wayland::input::set_pencil_mode(pencil.unwrap_or_default());
             let to = to.or(receiver);
             let config = load_config(args.config.as_deref())?;
             let cli = config::Layer {

@@ -4,11 +4,12 @@
 //! Wayland event queue is not `Send`.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use opendisplay_proto::control::{Scroll, Touch, TouchPhase};
+use opendisplay_proto::control::{Pencil, PencilPhase, Scroll, Touch, TouchPhase};
 use tracing::{debug, warn};
 
 use crate::backend::InputSink;
@@ -21,10 +22,49 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 
 const BTN_LEFT: u32 = 0x110;
 
+/// What the Apple Pencil does to the pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum PencilMode {
+    /// Contact holds the left button, so the pen draws/selects like a finger.
+    #[default]
+    Draw,
+    /// Contact only moves the pointer, never presses: aim with the pen, click
+    /// with the keyboard (what an osu! tablet player does, minus hover).
+    Move,
+    /// Ignore pen events entirely; fingers keep working.
+    Off,
+}
+
+static PENCIL_MODE: AtomicU8 = AtomicU8::new(0);
+
+/// Process-wide: the sender is one session, and the injector is built deep in
+/// the backend where the CLI options do not reach.
+pub fn set_pencil_mode(mode: PencilMode) {
+    PENCIL_MODE.store(
+        match mode {
+            PencilMode::Draw => 0,
+            PencilMode::Move => 1,
+            PencilMode::Off => 2,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+fn pencil_mode() -> PencilMode {
+    match PENCIL_MODE.load(Ordering::Relaxed) {
+        1 => PencilMode::Move,
+        2 => PencilMode::Off,
+        _ => PencilMode::Draw,
+    }
+}
+
 #[derive(Debug)]
 enum InputCmd {
     Touch(Touch),
     Scroll(Scroll),
+    /// Apple Pencil: the same absolute pointer as touch, with the button held
+    /// for down..up. Wayland's virtual pointer has no pressure or tilt.
+    Pencil(Pencil),
     /// Move without pressing (used by the self-test).
     Move {
         x: f64,
@@ -158,6 +198,10 @@ impl InputSink for InputInjector {
     fn scroll(&mut self, s: &Scroll) {
         self.send(InputCmd::Scroll(s.clone()));
     }
+
+    fn pencil(&mut self, p: &Pencil) {
+        self.send(InputCmd::Pencil(p.clone()));
+    }
 }
 
 impl Drop for InputInjector {
@@ -221,6 +265,7 @@ fn injector_thread(
         )
     };
     let mut pressed = false;
+    let mut pressed_at: Option<Duration> = None;
     for cmd in rx {
         match cmd {
             InputCmd::Stop => break,
@@ -239,6 +284,7 @@ fn injector_thread(
                             pointer.button(time(start), BTN_LEFT, wl_pointer::ButtonState::Pressed);
                             pointer.frame();
                             pressed = true;
+                            pressed_at = Some(start.elapsed());
                         }
                     }
                     TouchPhase::Moved => {}
@@ -251,6 +297,58 @@ fn injector_thread(
                             );
                             pointer.frame();
                             pressed = false;
+                            pressed_at = None;
+                        }
+                    }
+                }
+            }
+            InputCmd::Pencil(p) => {
+                let mode = pencil_mode();
+                if mode != PencilMode::Off {
+                    let (ax, ay) = to_abs(p.x, p.y);
+                    pointer.motion_absolute(time(start), ax, ay, xe, ye);
+                    pointer.frame();
+                }
+                // `Move`: aim only. A pen player clicks with the keyboard, so
+                // the pointer must never be left holding a button. `Off`:
+                // nothing at all. `Draw`: contact is a held left button.
+                if mode == PencilMode::Draw {
+                    match p.phase {
+                        PencilPhase::Down => {
+                            if !pressed {
+                                pointer.button(
+                                    time(start),
+                                    BTN_LEFT,
+                                    wl_pointer::ButtonState::Pressed,
+                                );
+                                pointer.frame();
+                                pressed = true;
+                                pressed_at = Some(start.elapsed());
+                            }
+                        }
+                        // A hover move just positions the pointer; no button.
+                        PencilPhase::Move | PencilPhase::Hover => {}
+                        PencilPhase::Up => {
+                            if pressed {
+                                // A contact shorter than a frame is easy for a
+                                // game polling at 60 Hz to miss; hold one frame.
+                                if let Some(at) = pressed_at {
+                                    let held = start.elapsed().saturating_sub(at);
+                                    if held < Duration::from_millis(16) {
+                                        std::thread::sleep(
+                                            Duration::from_millis(16).saturating_sub(held),
+                                        );
+                                    }
+                                }
+                                pointer.button(
+                                    time(start),
+                                    BTN_LEFT,
+                                    wl_pointer::ButtonState::Released,
+                                );
+                                pointer.frame();
+                                pressed = false;
+                                pressed_at = None;
+                            }
                         }
                     }
                 }

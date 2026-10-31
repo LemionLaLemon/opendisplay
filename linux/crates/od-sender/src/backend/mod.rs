@@ -398,7 +398,9 @@ pub type DriftProbe = Box<dyn FnOnce() -> Option<String> + Send>;
 pub trait InputSink: Send {
     fn touch(&mut self, t: &Touch);
     fn scroll(&mut self, s: &Scroll);
-    /// Pencil events are not mapped to the pointer yet; dropped.
+    /// Stylus events: the Linux sender drives the same pointer as touch, so a
+    /// pen draws and taps. Pressure and tilt have no Wayland virtual-pointer
+    /// equivalent and are dropped.
     fn pencil(&mut self, _p: &Pencil) {}
 }
 

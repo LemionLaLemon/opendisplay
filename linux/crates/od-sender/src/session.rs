@@ -1235,6 +1235,10 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
                         }
                     }
                     SenderAction::Pencil(p) => {
+                        debug!(
+                            "pencil {:?} {:.3},{:.3} pressure {:.2}",
+                            p.phase, p.x, p.y, p.pressure
+                        );
                         if let Some(i) = active.as_mut().and_then(|a| a.input.as_mut()) {
                             i.pencil(&p);
                         }
