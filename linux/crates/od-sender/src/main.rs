@@ -1,6 +1,7 @@
 mod backend;
 mod bounded;
 mod config;
+mod control;
 mod desktop;
 mod dev;
 mod disconnect;
@@ -149,6 +150,10 @@ enum Cmd {
         /// the keyboard, `off` ignores the pen [default: draw].
         #[arg(long, value_enum, value_name = "MODE")]
         pencil: Option<crate::wayland::input::PencilMode>,
+        /// Unix socket a companion app can use to change the pen area and
+        /// mode while the session runs (one command per line; see control.rs).
+        #[arg(long, value_name = "PATH")]
+        control_socket: Option<std::path::PathBuf>,
         /// Active area of the pen mapped to the whole display: `0.6` (centred
         /// 60%), `60x50` (percent), or `x,y,w,h` (fractions). Smaller means
         /// less pen travel for the same cursor movement, like a tablet's area
@@ -363,6 +368,7 @@ fn real_main() -> Result<i32> {
             cursor,
             pencil,
             pencil_area,
+            control_socket,
             no_cursor,
             position,
             workspace,
@@ -377,6 +383,10 @@ fn real_main() -> Result<i32> {
                 crate::wayland::input::set_pencil_area(crate::wayland::input::PencilArea::parse(
                     &spec,
                 )?);
+            }
+            if let Some(path) = &control_socket {
+                control::serve(path)?;
+                info!("control socket {}", path.display());
             }
             let to = to.or(receiver);
             let config = load_config(args.config.as_deref())?;

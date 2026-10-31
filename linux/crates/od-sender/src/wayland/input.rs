@@ -49,6 +49,10 @@ pub fn set_pencil_mode(mode: PencilMode) {
     );
 }
 
+pub fn current_pencil_mode() -> PencilMode {
+    pencil_mode()
+}
+
 fn pencil_mode() -> PencilMode {
     match PENCIL_MODE.load(Ordering::Relaxed) {
         1 => PencilMode::Move,
@@ -142,14 +146,25 @@ impl PencilArea {
     }
 }
 
-static PENCIL_AREA: std::sync::OnceLock<PencilArea> = std::sync::OnceLock::new();
+static PENCIL_AREA: std::sync::Mutex<PencilArea> = std::sync::Mutex::new(PencilArea {
+    x0: 0.0,
+    y0: 0.0,
+    w: 1.0,
+    h: 1.0,
+});
 
 pub fn set_pencil_area(area: PencilArea) {
-    let _ = PENCIL_AREA.set(area);
+    if let Ok(mut current) = PENCIL_AREA.lock() {
+        *current = area;
+    }
+}
+
+pub fn current_pencil_area() -> PencilArea {
+    PENCIL_AREA.lock().map(|a| *a).unwrap_or_default()
 }
 
 fn pencil_area() -> PencilArea {
-    *PENCIL_AREA.get_or_init(PencilArea::default)
+    current_pencil_area()
 }
 
 #[derive(Debug)]
