@@ -36,7 +36,6 @@ pub enum PencilMode {
 }
 
 static PENCIL_MODE: AtomicU8 = AtomicU8::new(0);
-
 /// Process-wide: the sender is one session, and the injector is built deep in
 /// the backend where the CLI options do not reach.
 pub fn set_pencil_mode(mode: PencilMode) {
@@ -56,6 +55,101 @@ fn pencil_mode() -> PencilMode {
         2 => PencilMode::Off,
         _ => PencilMode::Draw,
     }
+}
+
+/// The rectangle of the pen's surface that is mapped onto the whole display,
+/// in normalised coordinates. Drawing tablets call this the active area: a
+/// smaller one means less pen travel for the same cursor movement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PencilArea {
+    pub x0: f64,
+    pub y0: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Default for PencilArea {
+    fn default() -> Self {
+        Self {
+            x0: 0.0,
+            y0: 0.0,
+            w: 1.0,
+            h: 1.0,
+        }
+    }
+}
+
+impl PencilArea {
+    /// Parse `0.6` (centred square), `60x50` (percent), `0.6x0.5`
+    /// (fractions), or `x,y,w,h` (an off-centre rectangle).
+    pub fn parse(spec: &str) -> anyhow::Result<Self> {
+        let spec = spec.trim();
+        let frac = |s: &str| -> anyhow::Result<f64> {
+            let v: f64 = s
+                .trim()
+                .parse()
+                .map_err(|_| anyhow::anyhow!("{s:?} is not a number"))?;
+            // A bare number above 1 is read as a percentage.
+            let v = if v > 1.0 { v / 100.0 } else { v };
+            Ok(v)
+        };
+        let area = if spec.contains(',') {
+            let p: Vec<&str> = spec.split(',').collect();
+            if p.len() != 4 {
+                anyhow::bail!("expected x,y,w,h, e.g. 0.1,0.1,0.8,0.8");
+            }
+            PencilArea {
+                x0: frac(p[0])?,
+                y0: frac(p[1])?,
+                w: frac(p[2])?,
+                h: frac(p[3])?,
+            }
+        } else {
+            let (w, h) = match spec.split_once(['x', 'X']) {
+                Some((w, h)) => (frac(w)?, frac(h)?),
+                None => {
+                    let v = frac(spec)?;
+                    (v, v)
+                }
+            };
+            PencilArea {
+                x0: (1.0 - w) / 2.0,
+                y0: (1.0 - h) / 2.0,
+                w,
+                h,
+            }
+        };
+        let ok = area.w > 0.0
+            && area.h > 0.0
+            && area.w <= 1.0
+            && area.h <= 1.0
+            && area.x0 >= 0.0
+            && area.y0 >= 0.0
+            && area.x0 + area.w <= 1.000_001
+            && area.y0 + area.h <= 1.000_001;
+        if !ok {
+            anyhow::bail!("pencil area must fit inside the surface (0..1), got {spec:?}");
+        }
+        Ok(area)
+    }
+
+    /// Pen position → display position, clamped at the area's edges.
+    fn mapped(&self, x: f64, y: f64) -> (f64, f64) {
+        (
+            ((x - self.x0) / self.w).clamp(0.0, 1.0),
+            ((y - self.y0) / self.h).clamp(0.0, 1.0),
+        )
+    }
+}
+
+static PENCIL_AREA: std::sync::OnceLock<PencilArea> = std::sync::OnceLock::new();
+
+pub fn set_pencil_area(area: PencilArea) {
+    let _ = PENCIL_AREA.set(area);
+}
+
+fn pencil_area() -> PencilArea {
+    *PENCIL_AREA.get_or_init(PencilArea::default)
 }
 
 #[derive(Debug)]
@@ -305,7 +399,8 @@ fn injector_thread(
             InputCmd::Pencil(p) => {
                 let mode = pencil_mode();
                 if mode != PencilMode::Off {
-                    let (ax, ay) = to_abs(p.x, p.y);
+                    let (x, y) = pencil_area().mapped(p.x, p.y);
+                    let (ax, ay) = to_abs(x, y);
                     pointer.motion_absolute(time(start), ax, ay, xe, ye);
                     pointer.frame();
                 }
@@ -382,4 +477,54 @@ fn injector_thread(
     let _ = queue.roundtrip(&mut st);
     debug!("input thread done");
     Ok(())
+}
+
+#[cfg(test)]
+mod pencil_tests {
+    use super::PencilArea;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn the_default_area_is_the_whole_surface() {
+        let a = PencilArea::default();
+        assert_eq!(a.mapped(0.0, 0.0), (0.0, 0.0));
+        assert_eq!(a.mapped(0.25, 0.75), (0.25, 0.75));
+    }
+
+    #[test]
+    fn a_smaller_area_magnifies_movement() {
+        let a = PencilArea::parse("0.5").unwrap();
+        assert!(close(a.x0, 0.25) && close(a.h, 0.5));
+        for (pen, want) in [(0.25, 0.0), (0.5, 0.5), (0.75, 1.0), (0.1, 0.0)] {
+            let (x, y) = a.mapped(pen, pen);
+            assert!(close(x, want) && close(y, want), "{pen} -> {x},{y}");
+        }
+        // Outside the area clamps to the edge.
+        let (x, y) = a.mapped(0.1, 0.9);
+        assert!(close(x, 0.0) && close(y, 1.0));
+    }
+
+    #[test]
+    fn percent_and_off_centre_forms_parse() {
+        let a = PencilArea::parse("60x50").unwrap();
+        assert!(close(a.w, 0.6) && close(a.h, 0.5));
+        assert!(close(a.x0, 0.2) && close(a.y0, 0.25));
+        let b = PencilArea::parse("0.1, 0.2, 0.5, 0.5").unwrap();
+        assert!(close(b.x0, 0.1) && close(b.y0, 0.2));
+        let (x, y) = b.mapped(0.1, 0.2);
+        assert!(close(x, 0.0) && close(y, 0.0));
+        let (x, y) = b.mapped(0.6, 0.7);
+        assert!(close(x, 1.0) && close(y, 1.0));
+    }
+
+    #[test]
+    fn areas_outside_the_surface_are_rejected() {
+        assert!(PencilArea::parse("0.1,0.1,0.95,0.8").is_err());
+        assert!(PencilArea::parse("0").is_err());
+        assert!(PencilArea::parse("wide").is_err());
+        assert!(PencilArea::parse("0.1,0.2,0.3").is_err());
+    }
 }

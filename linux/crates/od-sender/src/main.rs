@@ -149,6 +149,12 @@ enum Cmd {
         /// the keyboard, `off` ignores the pen [default: draw].
         #[arg(long, value_enum, value_name = "MODE")]
         pencil: Option<crate::wayland::input::PencilMode>,
+        /// Active area of the pen mapped to the whole display: `0.6` (centred
+        /// 60%), `60x50` (percent), or `x,y,w,h` (fractions). Smaller means
+        /// less pen travel for the same cursor movement, like a tablet's area
+        /// setting [default: the whole surface].
+        #[arg(long, value_name = "AREA")]
+        pencil_area: Option<String>,
         /// Same as `--cursor off`.
         #[arg(long, conflicts_with = "cursor")]
         no_cursor: bool,
@@ -333,6 +339,7 @@ fn real_main() -> Result<i32> {
             encoder,
             cursor,
             pencil,
+            pencil_area,
             no_cursor,
             position,
             workspace,
@@ -342,6 +349,11 @@ fn real_main() -> Result<i32> {
             backend,
         } => {
             crate::wayland::input::set_pencil_mode(pencil.unwrap_or_default());
+            if let Some(spec) = pencil_area {
+                crate::wayland::input::set_pencil_area(crate::wayland::input::PencilArea::parse(
+                    &spec,
+                )?);
+            }
             let to = to.or(receiver);
             let config = load_config(args.config.as_deref())?;
             let cli = config::Layer {

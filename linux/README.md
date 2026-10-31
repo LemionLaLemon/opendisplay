@@ -190,6 +190,7 @@ Useful `run` options:
 | `--cursor` | `auto` | `auto`, `video` (always paint the cursor into the video) or `off`; `--no-cursor` is `off`. `auto` sends the cursor separately when the receiver and desktop support it, which today means never on Hyprland |
 | `--capture` | `auto` | Screen-capture protocol on Hyprland and Sway: `auto`, `ext` or `wlr`. `auto` uses `wlr` on Hyprland before 0.57, whose `ext` capture can crash when a display disappears |
 | `--pencil` | `draw` | What the Apple Pencil does: `draw` (contact holds the left button, like a finger), `move` (aim only; click with the keyboard), `off` |
+| `--pencil-area` | whole surface | Active area mapped to the display: `0.5` (centred), `60x50` (percent), `x,y,w,h`. Smaller = less pen travel for the same cursor movement |
 | `--workspace` | next free one | Show this workspace (name or number) on the virtual display, keeping your focus where it is. Hyprland and Sway; ignored with a warning on KDE Plasma and GNOME |
 | `--backend` | detected | `hyprland`, `wlroots` (Sway), `kde`, `gnome`, or `adopt` with `--output <name>` |
 
@@ -414,6 +415,11 @@ rm -r ~/.config/opendisplay                              # optional: your settin
   osu!, use `--pencil move`: the pen only aims and clicks come from the
   keyboard. Pencil 2 on a hover-capable iPad sends `hover` moves, which the
   sender already maps to motion without a press.
+* **The pen needs too much travel.** The whole surface maps to the whole
+  display by default. `--pencil-area 0.5` maps the centred half of the
+  surface, doubling the cursor movement for the same pen travel; `0.4`, or
+  an off-centre `x,y,w,h` rectangle, go further. This is the tablet "area"
+  setting and applies to the pen only, not to touch.
 * **The cursor is part of the video on Hyprland.** It moves with video
   latency, and on a static screen it can lag until something else on the
   display changes. Hyprland's cursor-capture interface cannot deliver the
