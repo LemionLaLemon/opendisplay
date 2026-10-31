@@ -192,6 +192,8 @@ Useful `run` options:
 | `--tablet` | off | Drawing-tablet mode: stream a copy of a monitor (default: the focused one) and map pen input to it, without creating a virtual display |
 | `--pencil` | `draw` | What the Apple Pencil does: `draw` (contact holds the left button, like a finger), `move` (aim only; click with the keyboard), `off` |
 | `--pencil-area` | whole surface | Active area mapped to the display: `0.5` (centred), `60x50` (percent), `x,y,w,h`. Smaller = less pen travel for the same cursor movement |
+| `--pencil-motion` | `absolute` | `absolute`: the cursor follows the pen position (areas apply). `relative`: it stays put when the pen touches down and then moves by the pen's deltas, like a touchpad |
+| `--pencil-sensitivity` | 1.0 | Relative mode: screen widths travelled per full sweep of the pen surface |
 | `--workspace` | next free one | Show this workspace (name or number) on the virtual display, keeping your focus where it is. Hyprland and Sway; ignored with a warning on KDE Plasma and GNOME |
 | `--backend` | detected | `hyprland`, `wlroots` (Sway), `kde`, `gnome`, or `adopt` with `--output <name>` |
 
@@ -440,6 +442,12 @@ rm -r ~/.config/opendisplay                              # optional: your settin
   osu!, use `--pencil move`: the pen only aims and clicks come from the
   keyboard. Pencil 2 on a hover-capable iPad sends `hover` moves, which the
   sender already maps to motion without a press.
+* **Absolute mode feels like a canvas.** The pen is mapped position for
+  position, so the cursor jumps wherever you touch and you are stuck inside
+  the active area. `--pencil-motion relative` makes the pen a touchpad: the
+  cursor stays where it is when you touch down and only moves when the pen
+  moves, scaled by `--pencil-sensitivity` (1.0 = one screen per full sweep).
+  `--pencil-area` is ignored in relative mode.
 * **The pen needs too much travel.** The whole surface maps to the whole
   display by default. `--pencil-area 0.5` maps the centred half of the
   surface, doubling the cursor movement for the same pen travel; `0.4`, or

@@ -8,7 +8,10 @@
 //! pencil-area 0.5            -> ok area 0.5x0.5
 //! pencil-area 0,0.05,1,0.9   -> ok area 1x0.9
 //! pencil-mode move           -> ok move
+//! pencil-motion relative     -> ok relative
+//! pencil-sensitivity 1.5     -> ok 1.5
 //! status                     -> ok area 0.5x0.5 at 0.25,0.25 mode Move
+//!                               motion Relative sensitivity 1.50
 //! ```
 //!
 //! Anything else answers `error …`. The socket is removed when the sender
@@ -21,7 +24,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use clap::ValueEnum;
 
-use crate::wayland::input::{self, PencilArea, PencilMode};
+use crate::wayland::input::{self, PencilArea, PencilMode, PencilMotion};
 
 /// Serve `path` on a background thread until the process exits.
 pub fn serve(path: &Path) -> Result<()> {
@@ -66,6 +69,20 @@ fn handle(stream: UnixStream) -> Result<()> {
                 }
                 Err(e) => format!("error {e:#}"),
             },
+            "pencil-motion" | "motion" => match PencilMotion::from_str(arg, true) {
+                Ok(m) => {
+                    input::set_pencil_motion(m);
+                    format!("ok {arg}")
+                }
+                Err(e) => format!("error {e}"),
+            },
+            "pencil-sensitivity" | "sensitivity" => match arg.parse::<f64>() {
+                Ok(v) if (0.05..=10.0).contains(&v) => {
+                    input::set_pencil_sensitivity(v);
+                    format!("ok {v}")
+                }
+                _ => "error sensitivity must be between 0.05 and 10".into(),
+            },
             "pencil-mode" | "mode" => match PencilMode::from_str(arg, true) {
                 Ok(m) => {
                     input::set_pencil_mode(m);
@@ -76,12 +93,14 @@ fn handle(stream: UnixStream) -> Result<()> {
             "status" => {
                 let a = input::current_pencil_area();
                 format!(
-                    "ok area {}x{} at {}x{} mode {:?}",
+                    "ok area {}x{} at {}x{} mode {:?} motion {:?} sensitivity {:.2}",
                     a.w,
                     a.h,
                     a.x0,
                     a.y0,
-                    input::current_pencil_mode()
+                    input::current_pencil_mode(),
+                    input::current_pencil_motion(),
+                    input::current_pencil_sensitivity()
                 )
             }
             _ => format!("error unknown command {cmd:?}"),

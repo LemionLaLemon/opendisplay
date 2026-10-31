@@ -146,6 +146,59 @@ impl PencilArea {
     }
 }
 
+/// How pen positions move the pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum PencilMotion {
+    /// The cursor follows the pen's position; `--pencil-area` maps a region.
+    #[default]
+    Absolute,
+    /// The cursor stays where it is when the pen touches down and then moves
+    /// by the pen's deltas, like a touchpad. `--pencil-sensitivity` scales it.
+    Relative,
+}
+
+static PENCIL_MOTION: AtomicU8 = AtomicU8::new(0);
+
+pub fn set_pencil_motion(motion: PencilMotion) {
+    PENCIL_MOTION.store(
+        match motion {
+            PencilMotion::Absolute => 0,
+            PencilMotion::Relative => 1,
+        },
+        Ordering::Relaxed,
+    );
+}
+
+pub fn current_pencil_motion() -> PencilMotion {
+    if PENCIL_MOTION.load(Ordering::Relaxed) == 1 {
+        PencilMotion::Relative
+    } else {
+        PencilMotion::Absolute
+    }
+}
+
+fn pencil_motion() -> PencilMotion {
+    current_pencil_motion()
+}
+
+/// How many screen widths a full sweep of the pen surface covers in relative
+/// mode. 1.0 means the cursor crosses one screen per full sweep.
+static PENCIL_SENSITIVITY: std::sync::Mutex<f64> = std::sync::Mutex::new(1.0);
+
+pub fn set_pencil_sensitivity(value: f64) {
+    if let Ok(mut v) = PENCIL_SENSITIVITY.lock() {
+        *v = value.clamp(0.05, 10.0);
+    }
+}
+
+pub fn current_pencil_sensitivity() -> f64 {
+    PENCIL_SENSITIVITY.lock().map(|v| *v).unwrap_or(1.0)
+}
+
+fn pencil_sensitivity() -> f64 {
+    current_pencil_sensitivity()
+}
+
 static PENCIL_AREA: std::sync::Mutex<PencilArea> = std::sync::Mutex::new(PencilArea {
     x0: 0.0,
     y0: 0.0,
@@ -375,6 +428,7 @@ fn injector_thread(
     };
     let mut pressed = false;
     let mut pressed_at: Option<Duration> = None;
+    let mut last_pen: Option<(f64, f64)> = None;
     for cmd in rx {
         match cmd {
             InputCmd::Stop => break,
@@ -414,10 +468,35 @@ fn injector_thread(
             InputCmd::Pencil(p) => {
                 let mode = pencil_mode();
                 if mode != PencilMode::Off {
-                    let (x, y) = pencil_area().mapped(p.x, p.y);
-                    let (ax, ay) = to_abs(x, y);
-                    pointer.motion_absolute(time(start), ax, ay, xe, ye);
-                    pointer.frame();
+                    match pencil_motion() {
+                        PencilMotion::Absolute => {
+                            let (x, y) = pencil_area().mapped(p.x, p.y);
+                            let (ax, ay) = to_abs(x, y);
+                            pointer.motion_absolute(time(start), ax, ay, xe, ye);
+                            pointer.frame();
+                        }
+                        PencilMotion::Relative => {
+                            // Anchored on contact: the cursor does not jump to
+                            // the pen, it only moves once the pen does.
+                            if p.phase != PencilPhase::Down {
+                                if let Some((lx, ly)) = last_pen {
+                                    let s = pencil_sensitivity();
+                                    let (lw, lh) = (xe as f64 / scale, ye as f64 / scale);
+                                    let dx = (p.x - lx) * lw * s;
+                                    let dy = (p.y - ly) * lh * s;
+                                    if dx != 0.0 || dy != 0.0 {
+                                        pointer.motion(time(start), dx, dy);
+                                        pointer.frame();
+                                    }
+                                }
+                            }
+                            if p.phase == PencilPhase::Up {
+                                last_pen = None;
+                            } else {
+                                last_pen = Some((p.x, p.y));
+                            }
+                        }
+                    }
                 }
                 // `Move`: aim only. A pen player clicks with the keyboard, so
                 // the pointer must never be left holding a button. `Off`:

@@ -112,6 +112,7 @@ class Window(QMainWindow):
         self.setMinimumWidth(620)
         self.settings = QSettings("opendisplay", "gui")
         self.proc: QProcess | None = None
+        self.loading = True
         self.receivers: list[dict] = []
         self.area_timer = QTimer(self)
         self.area_timer.setSingleShot(True)
@@ -164,6 +165,25 @@ class Window(QMainWindow):
         # --- pen -----------------------------------------------------------
         pen = compact(QGroupBox("Apple Pencil"))
         pl = QFormLayout(pen)
+        self.motion = QComboBox()
+        self.motion.addItems(
+            [
+                "absolute: cursor follows the pen position",
+                "relative: stays put, moves with the pen (touchpad)",
+            ]
+        )
+        self.motion.currentIndexChanged.connect(self.on_motion)
+        pl.addRow("Motion", self.motion)
+
+        self.sensitivity = QDoubleSpinBox()
+        self.sensitivity.setRange(0.05, 5.0)
+        self.sensitivity.setSingleStep(0.1)
+        self.sensitivity.setDecimals(2)
+        self.sensitivity.setValue(1.0)
+        self.sensitivity.setSuffix(" screens per full sweep")
+        self.sensitivity.valueChanged.connect(self.on_sensitivity)
+        pl.addRow("Sensitivity", self.sensitivity)
+
         self.pen_mode = QComboBox()
         self.pen_mode.addItems(
             [
@@ -210,6 +230,10 @@ class Window(QMainWindow):
         crow.addWidget(self.custom, 1)
         crow.addWidget(apply_custom)
         pl.addRow("Custom", crow)
+        self.absolute_widgets = [self.area, self.area_spin, self.custom]
+        self.absolute_widgets += [
+            presets.itemAt(i).widget() for i in range(presets.count())
+        ] + [apply_custom]
         self.area_status = QLabel("whole surface")
         self.area_status.setStyleSheet("color:#888")
         pl.addRow("", self.area_status)
@@ -261,8 +285,9 @@ class Window(QMainWindow):
 
         self.setCentralWidget(root)
         self.resize(760, 820)
-        self.load()
         self.load_monitors()
+        self.load()
+        self.loading = False
         QTimer.singleShot(50, self.refresh_receivers)
 
     # --- receivers / monitors ---------------------------------------------
@@ -321,6 +346,27 @@ class Window(QMainWindow):
             )
             if r:
                 self.note(f"control: {r}")
+
+    def on_motion(self):
+        self.save()
+        self.sync_motion()
+        if self.proc and self.proc.state() == QProcess.Running:
+            r = Control.send(
+                "pencil-motion " + ["absolute", "relative"][self.motion.currentIndex()]
+            )
+            if r:
+                self.note(f"control: {r}")
+
+    def on_sensitivity(self):
+        self.save()
+        if self.proc and self.proc.state() == QProcess.Running:
+            Control.send(f"pencil-sensitivity {self.sensitivity.value():.2f}")
+
+    def sync_motion(self):
+        relative = self.motion.currentIndex() == 1
+        for w in self.absolute_widgets:
+            w.setEnabled(not relative)
+        self.sensitivity.setEnabled(relative)
 
     def on_area_slider(self, v):
         self.area_spin.blockSignals(True)
@@ -393,6 +439,8 @@ class Window(QMainWindow):
             if mon:
                 args.append(mon)
         args += ["--pencil", ["draw", "move", "off"][self.pen_mode.currentIndex()]]
+        args += ["--pencil-motion", ["absolute", "relative"][self.motion.currentIndex()]]
+        args += ["--pencil-sensitivity", f"{self.sensitivity.value():.2f}"]
         args += ["--pencil-area", f"{self.area_spin.value():.3f}"]
         args += [
             "--crf",
@@ -460,11 +508,16 @@ class Window(QMainWindow):
 
     # --- persistence --------------------------------------------------------
     def save(self):
+        if self.loading:
+            return  # widget signals fire while load() is assigning values
         s = self.settings
         s.setValue("transport", self.transport.currentIndex())
         s.setValue("tablet", self.mode_tablet.isChecked())
-        s.setValue("monitor", self.monitor.currentData())
+        if self.monitor.currentData() is not None:
+            s.setValue("monitor", self.monitor.currentData())
         s.setValue("pen_mode", self.pen_mode.currentIndex())
+        s.setValue("motion", self.motion.currentIndex())
+        s.setValue("sensitivity", self.sensitivity.value())
         s.setValue("area", self.area_spin.value())
         s.setValue("crf", self.crf.value())
         s.setValue("bitrate", self.bitrate.value())
@@ -476,12 +529,15 @@ class Window(QMainWindow):
         self.mode_tablet.setChecked(bool(s.value("tablet", False, type=bool)))
         self.mode_extend.setChecked(not self.mode_tablet.isChecked())
         self.pen_mode.setCurrentIndex(int(s.value("pen_mode", 1)))
+        self.motion.setCurrentIndex(int(s.value("motion", 0)))
+        self.sensitivity.setValue(float(s.value("sensitivity", 1.0)))
         self.area_spin.setValue(float(s.value("area", 0.5)))
         self.area.setValue(round(self.area_spin.value() * 100))
         self.crf.setValue(int(s.value("crf", 16)))
         self.bitrate.setValue(int(s.value("bitrate", 40)))
         self.preset.setCurrentText(str(s.value("preset", "superfast")))
         self.sync_mode()
+        self.sync_motion()
 
 
 def main() -> int:

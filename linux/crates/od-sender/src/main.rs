@@ -150,6 +150,15 @@ enum Cmd {
         /// the keyboard, `off` ignores the pen [default: draw].
         #[arg(long, value_enum, value_name = "MODE")]
         pencil: Option<crate::wayland::input::PencilMode>,
+        /// How the pen moves the pointer: `absolute` (follow the position;
+        /// areas apply) or `relative` (stays put on contact, then moves by
+        /// the pen's deltas, like a touchpad) [default: absolute].
+        #[arg(long, value_enum, value_name = "MOTION")]
+        pencil_motion: Option<crate::wayland::input::PencilMotion>,
+        /// Relative motion only: screen widths travelled per full sweep of
+        /// the pen surface [default: 1.0].
+        #[arg(long, value_name = "N")]
+        pencil_sensitivity: Option<f64>,
         /// Unix socket a companion app can use to change the pen area and
         /// mode while the session runs (one command per line; see control.rs).
         #[arg(long, value_name = "PATH")]
@@ -368,6 +377,8 @@ fn real_main() -> Result<i32> {
             cursor,
             pencil,
             pencil_area,
+            pencil_motion,
+            pencil_sensitivity,
             control_socket,
             no_cursor,
             position,
@@ -383,6 +394,13 @@ fn real_main() -> Result<i32> {
                 crate::wayland::input::set_pencil_area(crate::wayland::input::PencilArea::parse(
                     &spec,
                 )?);
+            }
+            crate::wayland::input::set_pencil_motion(pencil_motion.unwrap_or_default());
+            if let Some(v) = pencil_sensitivity {
+                if !(0.05..=10.0).contains(&v) {
+                    anyhow::bail!("--pencil-sensitivity must be between 0.05 and 10, got {v}");
+                }
+                crate::wayland::input::set_pencil_sensitivity(v);
             }
             if let Some(path) = &control_socket {
                 control::serve(path)?;
