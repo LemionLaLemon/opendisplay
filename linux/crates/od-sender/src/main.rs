@@ -18,7 +18,7 @@ mod wayland;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args as ClapArgs, Parser, Subcommand};
 use tracing::{error, info};
 
@@ -167,6 +167,13 @@ enum Cmd {
         /// the next free one, or the config file's].
         #[arg(long, value_name = "NAME|ID")]
         workspace: Option<String>,
+        /// Use the iPad as a drawing tablet for an existing monitor: stream a
+        /// copy of MONITOR (default: the focused one) and map pen/touch input
+        /// to it, without creating a virtual display. Pair with
+        /// `--pencil move` for games where clicks come from the keyboard.
+        #[arg(long, value_name = "MONITOR", num_args = 0..=1, default_missing_value = "",
+              conflicts_with_all = ["backend", "output"])]
+        tablet: Option<String>,
         /// Leave the virtual display in place when the sender exits (development).
         #[arg(long)]
         keep_output: bool,
@@ -274,6 +281,22 @@ fn resolve_receiver(
     })
 }
 
+/// `--tablet` without a value means the focused monitor. Hyprland can say
+/// which that is; elsewhere the name has to be given.
+fn tablet_output(sel: &str) -> Result<String> {
+    if !sel.trim().is_empty() {
+        return Ok(sel.trim().to_string());
+    }
+    let ipc = crate::backend::hyprland::ipc::HyprlandIpc::from_env().context(
+        "cannot find the focused monitor here; pass --tablet <MONITOR> (e.g. --tablet eDP-1)",
+    )?;
+    ipc.monitors()?
+        .into_iter()
+        .find(|m| m.focused)
+        .map(|m| m.name)
+        .context("no focused monitor; pass --tablet <MONITOR>")
+}
+
 /// The config file: `--config` (must exist) or the default path (optional).
 fn load_config(explicit: Option<&std::path::Path>) -> Result<config::Config> {
     match explicit {
@@ -343,6 +366,7 @@ fn real_main() -> Result<i32> {
             no_cursor,
             position,
             workspace,
+            tablet,
             keep_output,
             no_reconnect,
             duration,
@@ -372,7 +396,14 @@ fn real_main() -> Result<i32> {
                     .then(|| config.to.clone())
                     .flatten()
             });
-            let mut backend = detect::detect(&backend.request_with(config.capture))?;
+            let mut req = backend.request_with(config.capture);
+            if let Some(sel) = tablet {
+                let output = tablet_output(&sel)?;
+                info!("tablet mode: {output} (no virtual display), pen mapped to it");
+                req.backend = Some(BackendId::Adopt);
+                req.output = Some(output);
+            }
+            let mut backend = detect::detect(&req)?;
             let rt = tokio::runtime::Runtime::new()?;
             let usb = usb || config.usb.unwrap_or(false);
             let usb_device = usb_device.or_else(|| config.usb_device.clone());

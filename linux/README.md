@@ -189,6 +189,7 @@ Useful `run` options:
 | `--preset` | `superfast` | x264 speed/quality preset (`ultrafast` … `veryslow`); slower buys sharpness with CPU |
 | `--cursor` | `auto` | `auto`, `video` (always paint the cursor into the video) or `off`; `--no-cursor` is `off`. `auto` sends the cursor separately when the receiver and desktop support it, which today means never on Hyprland |
 | `--capture` | `auto` | Screen-capture protocol on Hyprland and Sway: `auto`, `ext` or `wlr`. `auto` uses `wlr` on Hyprland before 0.57, whose `ext` capture can crash when a display disappears |
+| `--tablet` | off | Drawing-tablet mode: stream a copy of a monitor (default: the focused one) and map pen input to it, without creating a virtual display |
 | `--pencil` | `draw` | What the Apple Pencil does: `draw` (contact holds the left button, like a finger), `move` (aim only; click with the keyboard), `off` |
 | `--pencil-area` | whole surface | Active area mapped to the display: `0.5` (centred), `60x50` (percent), `x,y,w,h`. Smaller = less pen travel for the same cursor movement |
 | `--workspace` | next free one | Show this workspace (name or number) on the virtual display, keeping your focus where it is. Hyprland and Sway; ignored with a warning on KDE Plasma and GNOME |
@@ -200,8 +201,32 @@ Hyprland instances, like `hyprctl -i`; `od-sender doctor` lists them.
 Exit codes: 0 done, 1 error, 2 unsupported desktop or a config file that does
 not parse, 3 no receiver found, 4 several receivers and no `--to`.
 
-### USB (Apple devices)
+### Tablet mode
 
+`--tablet` uses the iPad as a **drawing tablet for an existing monitor**
+instead of as an extra display: the sender streams a copy of that monitor and
+maps pen and touch input to its extents, and no virtual output is created.
+You look at the monitor and draw on the iPad — the same topology as a screen
+tablet, with the display on the other side of the link.
+
+```sh
+od-sender run --auto --tablet                 # the focused monitor
+od-sender run --auto --tablet DP-1            # or name one
+od-sender run --auto --tablet --pencil move --pencil-area 0.5
+```
+
+`--tablet` is shorthand for `--backend adopt --output <monitor>`; it
+conflicts with `--backend`/`--output`. The iPad still shows what it captures,
+so you get a preview, but nothing is added to your layout and nothing is
+moved when the sender exits.
+
+The pen is absolute across the monitor. Without hover (Pencil 1) contact is
+also the left button, which is a problem for games: `--pencil move` makes the
+pen aim only and leaves clicking to the keyboard, which is how a lot of osu!
+tablet players work. `--pencil-area` shrinks the active area so the same
+cursor movement needs less pen travel, exactly like a tablet's area setting.
+
+### USB (Apple devices)
 An iPhone or iPad on a cable can carry the stream instead of Wi-Fi: the same
 TCP protocol runs through **usbmuxd**, Apple's device-multiplexing daemon, so
 there is no packet loss from a busy radio and the round trip drops from
