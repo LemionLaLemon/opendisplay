@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=OpenDisplay
+GenericName=Display and tablet control
+Comment=Start od-sender, switch extend/tablet mode, tune the pen and quality
+Exec=od-control
+Icon=video-display
+Terminal=false
+Categories=Utility;Settings;HardwareSettings;
+Keywords=display;tablet;pen;ipad;sender;opendisplay;
+StartupNotify=true

@@ -17,3 +17,23 @@ sender's `--control-socket`, so the display is not rebuilt. Everything else
 is pressed; Stop sends SIGTERM so a virtual display is removed cleanly.
 
 The window keeps its settings in `~/.config/opendisplay/gui.conf`.
+
+## Launcher
+
+The app is a normal GUI program, so give it a desktop entry:
+
+```sh
+install -Dm755 od_control.py ~/.local/share/od-control/od_control.py
+mkdir -p ~/.local/bin ~/.local/share/applications
+cat > ~/.local/bin/od-control <<'SH'
+#!/bin/sh
+script="$HOME/opendisplay/linux/tools/od-control/od_control.py"
+[ -f "$script" ] || script="$HOME/.local/share/od-control/od_control.py"
+exec python3 "$script" "$@"
+SH
+chmod +x ~/.local/bin/od-control
+install -Dm644 od-control.desktop ~/.local/share/applications/od-control.desktop
+```
+
+It then appears as **OpenDisplay** with the display icon (adjust `Exec=` to an
+absolute path if `~/.local/bin` is not on the session's `PATH`).
