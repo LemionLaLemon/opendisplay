@@ -229,6 +229,13 @@ fn config_report(explicit: Option<&Path>) -> bool {
                     opt(c.cursor.map(|m| format!("{m:?}").to_lowercase())),
                     opt(c.capture.map(|m| format!("{m:?}").to_lowercase()))
                 );
+                println!(
+                    "  crf {}, preset {}, usb {}, usb-device {}",
+                    opt(c.crf.map(|f| f.to_string())),
+                    opt(c.preset.map(|p| p.as_str().to_string())),
+                    opt(c.usb.map(|u| u.to_string())),
+                    opt(c.usb_device.clone())
+                );
                 for (k, l) in &c.receivers {
                     println!("  [receiver.\"{k}\"] {}", layer_line(l));
                 }
